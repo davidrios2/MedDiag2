@@ -1,30 +1,129 @@
+import uuid as _uuid
+
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Float,
     Integer,
+    BigInteger,
     String,
     Text,
     Numeric,
     ForeignKey,
     CheckConstraint,
     UniqueConstraint,
-    DateTime,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.utils.database import Base
 
 
+# ---------------------------------------------------------------------------
+# Identity & Access
+# ---------------------------------------------------------------------------
+
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(Text, nullable=False)
+
+    # --- legacy fields (kept for backward-compat) ---
+    name = Column(Text, nullable=True)
     phone_number = Column(Text)
     gender = Column(String(1), CheckConstraint("gender IN ('M','F','O')"))
     email = Column(Text, unique=True)
 
-    diagnoses = relationship("Diagnosis", back_populates="user")
+    # --- new auth fields ---
+    auth_provider = Column(String(50), nullable=True)   # "local", "supabase", "firebase"
+    auth_subject = Column(String(255), nullable=True)    # UID from external provider
+    display_name = Column(Text, nullable=True)
+    email_verified = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
 
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("auth_provider", "auth_subject", name="uq_auth_identity"),
+    )
+
+    diagnoses = relationship("Diagnosis", back_populates="user")
+    roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
+    audio_records = relationship("AudioRecord", back_populates="user", cascade="all, delete-orphan")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(50), unique=True, nullable=False)   # admin, doctor, patient
+    name = Column(Text, nullable=False)
+    description = Column(Text)
+
+    users = relationship("UserRole", back_populates="role")
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_id", name="uq_user_role"),
+    )
+
+    user = relationship("User", back_populates="roles")
+    role = relationship("Role", back_populates="users")
+
+
+# ---------------------------------------------------------------------------
+# Audio
+# ---------------------------------------------------------------------------
+
+class AudioRecord(Base):
+    __tablename__ = "audio_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(_uuid.uuid4()))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    source_type = Column(String(50), default="upload")  # upload, microphone, whatsapp
+    original_filename = Column(Text)
+    stored_filename = Column(Text, nullable=False)
+    storage_provider = Column(String(50), nullable=False, default="local")  # local, s3
+    storage_path = Column(Text, nullable=False)
+
+    mime_type = Column(String(100))
+    file_size_bytes = Column(BigInteger)
+    duration_seconds = Column(Float, nullable=True)
+
+    language_code = Column(String(10), nullable=True)
+    status = Column(String(50), nullable=False, default="uploaded")
+    # status values: uploaded, processing, transcribed, failed, archived
+
+    transcript_text = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('uploaded','processing','transcribed','failed','archived')",
+            name="ck_audio_status",
+        ),
+    )
+
+    user = relationship("User", back_populates="audio_records")
+
+
+# ---------------------------------------------------------------------------
+# Clinical (unchanged)
+# ---------------------------------------------------------------------------
 
 class Symptom(Base):
     __tablename__ = "symptoms"

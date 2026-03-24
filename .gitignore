@@ -19,7 +19,14 @@ Thumbs.db
 # Ignorar logs
 *.log
 
-# Ignorar markdown excepto README
+# Ignorar markdown excepto README y DEPLOY
 *.md
 !README.md
 !readme.md
+!DEPLOY.md
+
+# Storage de audio
+storage/
+
+# Alembic cache
+alembic/versions/__pycache__/

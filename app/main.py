@@ -16,13 +16,17 @@ from app.model_predict import (
     predict_heart,
     predict_parkinson,
 )
-from app.models import Disease
+from app.models import Disease, Role
 from app.utils.validators import validate_required_features
+
+# Routers
+from app.api.auth import router as auth_router
+from app.api.audio import router as audio_router
 
 # Create tables if they don't exist
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="MedDiag API", version="1.0.0")
+app = FastAPI(title="MedDiag API", version="2.0.0")
 
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in allowed_origins.split(",")]
@@ -35,6 +39,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---- Register new routers ----
+app.include_router(auth_router)
+app.include_router(audio_router)
+
+
+# ---- Legacy schemas (unchanged) ----
 
 class Patient(BaseModel):
     name: str = Field(..., example="Paciente Demo")
@@ -73,11 +83,30 @@ def get_db():
         db.close()
 
 
+# ---- Startup ----
+
 @app.on_event("startup")
 def startup_seed():
     with SessionLocal() as db:
         crud.seed_default_diseases(db)
+        _seed_default_roles(db)
 
+
+def _seed_default_roles(db: Session) -> None:
+    """Create the default roles if they don't exist."""
+    defaults = [
+        ("admin", "Administrador", "Acceso operativo completo"),
+        ("doctor", "Doctor", "Puede ver audios de pacientes asignados"),
+        ("patient", "Paciente", "Puede subir y ver sus propios audios"),
+    ]
+    for code, name, desc in defaults:
+        exists = db.query(Role).filter(Role.code == code).first()
+        if not exists:
+            db.add(Role(code=code, name=name, description=desc))
+    db.commit()
+
+
+# ---- Legacy endpoints (unchanged) ----
 
 @app.get("/health")
 def health():
